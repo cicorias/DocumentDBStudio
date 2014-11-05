@@ -8,6 +8,7 @@ namespace Microsoft.Azure.DocumentDBStudio
     using System.Collections.Generic;
     using System.Drawing;
     using System.IO;
+    using System.Linq;
     using System.Threading.Tasks;
     using System.Windows.Forms;
     using Microsoft.Azure.DocumentDBStudio.Properties;
@@ -16,12 +17,28 @@ namespace Microsoft.Azure.DocumentDBStudio
     using Newtonsoft.Json;
     using Newtonsoft.Json.Serialization;
     using System.Text;
+    using Microsoft.Azure.Documents;
 
     internal class AccountSettings
     {
         public string MasterKey;
         public ConnectionMode ConnectionMode;
         public Protocol Protocol;
+    }
+
+    public class CommandContext
+    {
+        public bool IsDelete;
+        public bool IsFeed;
+        public bool HasContinuation;
+        public bool QueryStarted;
+        public CommandContext()
+        {
+            this.IsDelete = false;
+            this.IsFeed = false;
+            this.HasContinuation = false;
+            this.QueryStarted = false;
+        }
     }
 
     enum ResourceType
@@ -82,6 +99,10 @@ namespace Microsoft.Azure.DocumentDBStudio
             myMenuItem1.Click += new EventHandler((sender, e) => Refresh(true));
             this.contextMenu.MenuItems.Add(myMenuItem1);
 
+            MenuItem myMenuItem4 = new MenuItem("Query Database");
+            myMenuItem4.Click += new EventHandler(myMenuItemQueryDatabase_Click);
+            this.contextMenu.MenuItems.Add(myMenuItem4);
+
             this.contextMenu.MenuItems.Add("-");
 
             MenuItem myMenuItem2 = new MenuItem("Remove setting");
@@ -110,6 +131,12 @@ namespace Microsoft.Azure.DocumentDBStudio
             Program.GetMain().SetCrudContext("Add database", false, x, this.AddDatabase);
         }
 
+        void myMenuItemQueryDatabase_Click(object sender, EventArgs e)
+        {
+            Program.GetMain().SetCrudContext(string.Format("Query Database"),
+                false, "select * from c", this.QueryDatabases);
+        }
+
         void myMenuItemRemoveDatabaseAccount_Click(object sender, EventArgs e)
         {
             // 
@@ -117,6 +144,55 @@ namespace Microsoft.Azure.DocumentDBStudio
             Program.GetMain().RemoveAccountFromSettings(this.accountEndpoint);
         }
 
+        async void QueryDatabases(string queryText, object optional)
+        {
+            try
+            {
+                // text is the querytext.
+                IDocumentQuery<dynamic> q = this.client.CreateDatabaseQuery(queryText).AsDocumentQuery();
+
+                FeedResponse<Database> r = await q.ExecuteNextAsync<Database>();
+
+                // set the result window
+                string text = null;
+                if (r.Count > 1)
+                {
+                    text = string.Format("Returned {0} dataqbases", r.Count);
+                }
+                else
+                {
+                    text = string.Format("Returned {0} dataqbases", r.Count);
+                }
+
+                string jsonarray = "[";
+                int index = 0;
+                foreach (dynamic d in r)
+                {
+                    index++;
+                    // currently Query.ToString() has Formatting.Indented, but the public release doesn't have yet.
+                    jsonarray += d.ToString();
+
+                    if (index == r.Count)
+                    {
+                        jsonarray += "]";
+                    }
+                    else
+                    {
+                        jsonarray += ",\r\n";
+                    }
+                }
+
+                Program.GetMain().SetResultInBrowser(jsonarray, text, true, r.ResponseHeaders);
+            }
+            catch (AggregateException e)
+            {
+                Program.GetMain().SetResultInBrowser(null, e.InnerException.ToString(), true);
+            }
+            catch (Exception e)
+            {
+                Program.GetMain().SetResultInBrowser(null, e.ToString(), true);
+            }
+        }
         private async void FillWithChildren()
         {
             try
@@ -165,13 +241,13 @@ namespace Microsoft.Azure.DocumentDBStudio
             }
         }
 
-        async void AddDatabase(string text, string optional)
+        async void AddDatabase(string text, object optional)
         {
             try
             {
                 Documents.Database db = (Documents.Database)JsonConvert.DeserializeObject(text, typeof(Documents.Database));
 
-                ResourceResponse<Documents.Database> newdb = await this.client.CreateDatabaseAsync(db);
+                ResourceResponse<Documents.Database> newdb = await this.client.CreateDatabaseAsync(db, Program.GetMain().GetRequestOptions());
 
                 this.Nodes.Add(new DatabaseNode(this.client, newdb.Resource));
 
@@ -231,7 +307,9 @@ namespace Microsoft.Azure.DocumentDBStudio
         void myMenuItemDeleteDatabase_Click(object sender, EventArgs e)
         {
             string x = this.Tag.ToString();
-            Program.GetMain().SetCrudContext("Delete database", false, x, this.DeleteDatabase, true);
+            CommandContext context = new CommandContext();
+            context.IsDelete = true;
+            Program.GetMain().SetCrudContext("Delete database", false, x, this.DeleteDatabase, context);
         }
 
         void myMenuItemUpdateDatabase_Click(object sender, EventArgs e)
@@ -267,14 +345,14 @@ namespace Microsoft.Azure.DocumentDBStudio
             }
         }
 
-        async void AddDocumentCollection(string text, string optional)
+        async void AddDocumentCollection(string text, object optional)
         {
             try
             {
-                Documents.DocumentCollection coll = (Documents.DocumentCollection)JsonConvert.DeserializeObject(text, typeof(Documents.DocumentCollection));
+                DocumentCollection coll = optional as DocumentCollection;
                 Documents.Database db = (Documents.Database)this.Tag;
 
-                ResourceResponse<Documents.DocumentCollection> newcoll = await this.client.CreateDocumentCollectionAsync(db.SelfLink, coll);
+                ResourceResponse<Documents.DocumentCollection> newcoll = await this.client.CreateDocumentCollectionAsync(db.SelfLink, coll, Program.GetMain().GetRequestOptions());
 
                 // set the result window
                 string json = JsonConvert.SerializeObject(newcoll.Resource, Newtonsoft.Json.Formatting.Indented);
@@ -293,12 +371,12 @@ namespace Microsoft.Azure.DocumentDBStudio
             }
         }
 
-        async void UpdateDatabase(string text, string optional)
+        async void UpdateDatabase(string text, object optional)
         {
             try
             {
                 Documents.Database db = (Documents.Database)JsonConvert.DeserializeObject(text, typeof(Documents.Database));
-                ResourceResponse<Documents.Database> newdb = await this.client.ReplaceDatabaseAsync(db);
+                ResourceResponse<Documents.Database> newdb = await this.client.ReplaceDatabaseAsync(db, Program.GetMain().GetRequestOptions());
 
                 // set the result window
                 string json = JsonConvert.SerializeObject(newdb.Resource, Newtonsoft.Json.Formatting.Indented);
@@ -316,12 +394,12 @@ namespace Microsoft.Azure.DocumentDBStudio
             }
         }
 
-        async void DeleteDatabase(string text, string optional)
+        async void DeleteDatabase(string text, object optional)
         {
             try
             {
                 Documents.Database db = (Documents.Database)this.Tag;
-                ResourceResponse<Documents.Database> newdb = await this.client.DeleteDatabaseAsync(db.SelfLink);
+                ResourceResponse<Documents.Database> newdb = await this.client.DeleteDatabaseAsync(db.SelfLink, Program.GetMain().GetRequestOptions());
 
                 Program.GetMain().SetResultInBrowser(null, "Delete database succeed!", false, newdb.ResponseHeaders);
 
@@ -366,7 +444,8 @@ namespace Microsoft.Azure.DocumentDBStudio
     {
         private DocumentClient client;
         private ContextMenu contextMenu = new ContextMenu();
-
+        private string currentContinuation = null;
+        private CommandContext currentQueryCommandContext = null;
         public DocumentCollectionNode(DocumentClient client, Documents.DocumentCollection coll)
         {
             this.Text = coll.Id;
@@ -392,6 +471,9 @@ namespace Microsoft.Azure.DocumentDBStudio
             MenuItem myMenuItem9 = new MenuItem("Add Document From File");
             myMenuItem9.Click += new EventHandler(myMenuItemAddDocumentFromFile_Click);
             this.contextMenu.MenuItems.Add(myMenuItem9);
+            MenuItem myMenuItem4 = new MenuItem("Add Multiple Documents From Folder");
+            myMenuItem4.Click += new EventHandler(myMenuItemAddDocumentsFromFolder_Click);
+            this.contextMenu.MenuItems.Add(myMenuItem4);
             MenuItem myMenuItem1 = new MenuItem("Refresh Documents feed");
             myMenuItem1.Click += new EventHandler((sender, e) => Refresh(true));
             this.contextMenu.MenuItems.Add(myMenuItem1);
@@ -400,18 +482,21 @@ namespace Microsoft.Azure.DocumentDBStudio
             this.contextMenu.MenuItems.Add(myMenuItem2);
         }
 
+       
         void myMenuItemDeleteDocumentCollection_Click(object sender, EventArgs e)
         {
             string x = this.Tag.ToString();
-            Program.GetMain().SetCrudContext("Delete DocumentCollection", false, x, this.DeleteDocumentCollection, true);
+            CommandContext context = new CommandContext();
+            context.IsDelete = true;
+            Program.GetMain().SetCrudContext("Delete DocumentCollection", false, x, this.DeleteDocumentCollection, context);
         }
 
-        async void DeleteDocumentCollection(string text, string optional)
+        async void DeleteDocumentCollection(string text, object optional)
         {
             try
             {
                 Documents.DocumentCollection coll = (Documents.DocumentCollection)JsonConvert.DeserializeObject(text, typeof(Documents.DocumentCollection));
-                ResourceResponse<Documents.DocumentCollection> newcoll = await this.client.DeleteDocumentCollectionAsync(coll.SelfLink);
+                ResourceResponse<Documents.DocumentCollection> newcoll = await this.client.DeleteDocumentCollectionAsync(coll.SelfLink, Program.GetMain().GetRequestOptions());
 
                 Program.GetMain().SetResultInBrowser(null, "Delete DocumentCollection succeed!", false, newcoll.ResponseHeaders);
 
@@ -442,6 +527,47 @@ namespace Microsoft.Azure.DocumentDBStudio
             }
         }
 
+        async void myMenuItemAddDocumentsFromFolder_Click(object sender, EventArgs e)
+        {
+            OpenFileDialog ofd = new OpenFileDialog();
+            ofd.Multiselect = true;
+
+            DialogResult dr = ofd.ShowDialog();
+
+            if (dr == DialogResult.OK)
+            {
+                string status = string.Format("Add {0} files in collection\r\n", ofd.FileNames.Length);
+                // Read the files 
+                foreach (String filename in ofd.FileNames)
+                {
+
+                    // right now assume every file is JSON content
+                    string jsonText = System.IO.File.ReadAllText(filename);
+                    string fileRootName = Path.GetFileName(filename);
+
+                    object document = JsonConvert.DeserializeObject(jsonText);
+
+                    try
+                    {
+                        ResourceResponse<Documents.Document> newdocument = await this.client.CreateDocumentAsync((this.Tag as Documents.DocumentCollection).SelfLink, document, Program.GetMain().GetRequestOptions());
+                        status += string.Format("Succeed adding {0} \r\n", fileRootName);
+
+                    }
+                    catch (DocumentClientException ex)
+                    {
+                        status += string.Format("Failed adding {0}, statusCode={1} \r\n", fileRootName, ex.StatusCode);
+                    }
+                    catch (Exception ex)
+                    {
+                        status += string.Format("Failed adding {0}, unknown exception \r\n", fileRootName, ex.Message);
+                    }
+
+                    Program.GetMain().SetResultInBrowser(null, status, false);
+
+                }
+            }
+        }
+
         void myMenuItemAddDocument_Click(object sender, EventArgs e)
         {
             // 
@@ -454,19 +580,21 @@ namespace Microsoft.Azure.DocumentDBStudio
 
         void myMenuItemQueryDocument_Click(object sender, EventArgs e)
         {
-            // 
+            this.currentQueryCommandContext = new CommandContext();
+            this.currentQueryCommandContext.IsFeed = true; 
             Program.GetMain().SetCrudContext(string.Format("Query Documents from Collection {0}", (this.Tag as Documents.DocumentCollection).Id),
-                false, "select * from c", this.QueryDocuments);
+                false, "select * from c", this.QueryDocuments, this.currentQueryCommandContext);
+            
         }
 
 
-        async void AddDocument(string text, string optional)
+        async void AddDocument(string text, object optional)
         {
             try
             {
                 object document = JsonConvert.DeserializeObject(text);
 
-                ResourceResponse<Documents.Document> newdocument = await this.client.CreateDocumentAsync((this.Tag as Documents.DocumentCollection).SelfLink, document);
+                ResourceResponse<Documents.Document> newdocument = await this.client.CreateDocumentAsync((this.Tag as Documents.DocumentCollection).SelfLink, document, Program.GetMain().GetRequestOptions());
 
                 this.Nodes.Add(new DocumentNode(this.client, newdocument.Resource, ResourceType.Document));
 
@@ -486,14 +614,26 @@ namespace Microsoft.Azure.DocumentDBStudio
             }
         }
 
-        async void QueryDocuments(string queryText, string optional)
+        async void QueryDocuments(string queryText, object optional)
         {
             try
             {
                 // text is the querytext.
-                IDocumentQuery<dynamic> q = this.client.CreateDocumentQuery((this.Tag as Documents.DocumentCollection).SelfLink,
-                    queryText, null).AsDocumentQuery();
+                IDocumentQuery<dynamic> q = null;
+
+                FeedOptions feedOptions = Program.GetMain().GetFeedOptions();
+
+                if(!string.IsNullOrEmpty(this.currentContinuation)  && string.IsNullOrEmpty(feedOptions.RequestContinuation))
+                {
+                    feedOptions.RequestContinuation = this.currentContinuation;
+                }
+
+                q = this.client.CreateDocumentQuery((this.Tag as Documents.DocumentCollection).SelfLink, queryText, feedOptions).AsDocumentQuery();
+
                 FeedResponse<dynamic> r = await q.ExecuteNextAsync();
+                this.currentContinuation = r.ResponseContinuation;
+                this.currentQueryCommandContext.HasContinuation = !string.IsNullOrEmpty(this.currentContinuation);
+                this.currentQueryCommandContext.QueryStarted = true;
 
                 // set the result window
                 string text = null;
@@ -511,19 +651,21 @@ namespace Microsoft.Azure.DocumentDBStudio
                 foreach (dynamic d in r)
                 {
                     index++;
+                    // currently Query.ToString() has Formatting.Indented, but the public release doesn't have yet.
                     jsonarray += d.ToString();
+
                     if (index == r.Count)
                     {
                         jsonarray += "]";
                     }
                     else
                     {
-                        jsonarray += ",";
+                        jsonarray += ",\r\n";
                     }
                 }
 
                 Program.GetMain().SetResultInBrowser(jsonarray, text, true, r.ResponseHeaders);
-
+                Program.GetMain().SetNextPageVisibility(this.currentQueryCommandContext);
             }
             catch (AggregateException e)
             {
@@ -657,8 +799,23 @@ namespace Microsoft.Azure.DocumentDBStudio
 
         void myMenuItemUpdate_Click(object sender, EventArgs e)
         {
-            string x = this.Tag.ToString();
-            Program.GetMain().SetCrudContext("Update " + this.resourceType.ToString(), false, x, this.UpdateNode);
+            if (this.resourceType == ResourceType.StoredProcedure)
+            {
+                Program.GetMain().SetCrudContext("Update " + this.resourceType.ToString(), true, (this.Tag as Documents.StoredProcedure).Body, this.UpdateNode);
+            }
+            else if (this.resourceType == ResourceType.Trigger)
+            {
+                Program.GetMain().SetCrudContext("Update " + this.resourceType.ToString(), true, (this.Tag as Documents.Trigger).Body, this.UpdateNode);
+            }
+            else if (this.resourceType == ResourceType.UserDefinedFunction)
+            {
+                Program.GetMain().SetCrudContext("Update " + this.resourceType.ToString(), true, (this.Tag as Documents.UserDefinedFunction).Body, this.UpdateNode);
+            }
+            else
+            {
+                string x = this.Tag.ToString();
+                Program.GetMain().SetCrudContext("Update " + this.resourceType.ToString(), false, x, this.UpdateNode);
+            }
         }
 
         void myMenuItemAttachment_Click(object sender, EventArgs e)
@@ -698,7 +855,7 @@ namespace Microsoft.Azure.DocumentDBStudio
                         };
 
                         ResourceResponse<Documents.Attachment> rr = await this.client.CreateAttachmentAsync((this.Tag as Documents.Document).AttachmentsLink,
-                            stream);
+                            stream, options);
                         string json = rr.Resource.ToString();
 
                         Program.GetMain().SetResultInBrowser(json, null, false, rr.ResponseHeaders);
@@ -723,17 +880,19 @@ namespace Microsoft.Azure.DocumentDBStudio
         void myMenuItemDelete_Click(object sender, EventArgs e)
         {
             string x = this.Tag.ToString();
-            Program.GetMain().SetCrudContext("Delete " + this.resourceType.ToString(), false, x, this.DeleteNode, true);
+            CommandContext context = new CommandContext();
+            context.IsDelete = true;
+            Program.GetMain().SetCrudContext("Delete " + this.resourceType.ToString(), false, x, this.DeleteNode, context);
         }
 
-        async void AddAttachment(string text, string optional)
+        async void AddAttachment(string text, object optional)
         {
             try
             {
                 Documents.Attachment attachment = (Documents.Attachment)JsonConvert.DeserializeObject(text, typeof(Documents.Attachment));
 
                 ResourceResponse<Documents.Attachment> rr = await this.client.CreateAttachmentAsync((this.Tag as Documents.Resource).SelfLink,
-                    attachment);
+                    attachment, Program.GetMain().GetRequestOptions());
 
                 string json = rr.Resource.ToString();
 
@@ -751,7 +910,7 @@ namespace Microsoft.Azure.DocumentDBStudio
             }
         }
 
-        async void ExecuteStoredProcedure(string text, string optional)
+        async void ExecuteStoredProcedure(string text, object optional)
         {
             try
             {
@@ -787,15 +946,16 @@ namespace Microsoft.Azure.DocumentDBStudio
             }
         }
 
-        async void UpdateNode(string text, string optional)
+        async void UpdateNode(string text, object optionalObject)
         {
+            string optional = optionalObject as string;
             try
             {
                 string json = null;
                 if (this.resourceType == ResourceType.Document)
                 {
                     Documents.Document doc = (Documents.Document)JsonConvert.DeserializeObject(text, typeof(Documents.Document));
-                    ResourceResponse<Documents.Document> rr = await this.client.ReplaceDocumentAsync (doc.SelfLink, doc);
+                    ResourceResponse<Documents.Document> rr = await this.client.ReplaceDocumentAsync(doc.SelfLink, doc, Program.GetMain().GetRequestOptions());
                     json = rr.Resource.ToString();
 
                     this.Tag = rr.Resource;
@@ -805,8 +965,10 @@ namespace Microsoft.Azure.DocumentDBStudio
                 }
                 else if (this.resourceType == ResourceType.StoredProcedure)
                 {
-                    Documents.StoredProcedure sp = (Documents.StoredProcedure)JsonConvert.DeserializeObject(text, typeof(Documents.StoredProcedure));
-                    ResourceResponse<Documents.StoredProcedure> rr = await this.client.ReplaceStoredProcedureAsync(sp);
+                    Documents.StoredProcedure sp = this.Tag as Documents.StoredProcedure;
+                    sp.Body = text;
+                    if (!string.IsNullOrEmpty(optional)) { sp.Id = optional; }
+                    ResourceResponse<Documents.StoredProcedure> rr = await this.client.ReplaceStoredProcedureAsync(sp, Program.GetMain().GetRequestOptions());
                     json = rr.Resource.ToString();
                     this.Tag = rr.Resource;
                     this.Text = rr.Resource.Id;
@@ -816,7 +978,7 @@ namespace Microsoft.Azure.DocumentDBStudio
                 else if (this.resourceType == ResourceType.User)
                 {
                     Documents.User sp = (Documents.User)JsonConvert.DeserializeObject(text, typeof(Documents.User));
-                    ResourceResponse<Documents.User> rr = await this.client.ReplaceUserAsync(sp);
+                    ResourceResponse<Documents.User> rr = await this.client.ReplaceUserAsync(sp, Program.GetMain().GetRequestOptions());
                     json = rr.Resource.ToString();
                     this.Tag = rr.Resource;
                     this.Text = rr.Resource.Id;
@@ -825,8 +987,10 @@ namespace Microsoft.Azure.DocumentDBStudio
                 }
                 else if (this.resourceType == ResourceType.Trigger)
                 {
-                    Documents.Trigger sp = Documents.Resource.LoadFrom<Documents.Trigger>(new MemoryStream(Encoding.UTF8.GetBytes(text)));
-                    ResourceResponse<Documents.Trigger> rr = await this.client.ReplaceTriggerAsync(sp);
+                    Documents.Trigger sp = this.Tag as Documents.Trigger;
+                    sp.Body = text;
+                    if (!string.IsNullOrEmpty(optional)) { sp.Id = optional; }
+                    ResourceResponse<Documents.Trigger> rr = await this.client.ReplaceTriggerAsync(sp, Program.GetMain().GetRequestOptions());
                     json = rr.Resource.ToString();
                     this.Tag = rr.Resource;
                     this.Text = rr.Resource.Id;
@@ -835,8 +999,10 @@ namespace Microsoft.Azure.DocumentDBStudio
                 }
                 else if (this.resourceType == ResourceType.UserDefinedFunction)
                 {
-                    Documents.UserDefinedFunction sp = (Documents.UserDefinedFunction)JsonConvert.DeserializeObject(text, typeof(Documents.UserDefinedFunction));
-                    ResourceResponse<Documents.UserDefinedFunction> rr = await this.client.ReplaceUserDefinedFunctionAsync(sp);
+                    Documents.UserDefinedFunction sp = this.Tag as Documents.UserDefinedFunction;
+                    sp.Body = text;
+                    if (!string.IsNullOrEmpty(optional)) { sp.Id = optional; }
+                    ResourceResponse<Documents.UserDefinedFunction> rr = await this.client.ReplaceUserDefinedFunctionAsync(sp, Program.GetMain().GetRequestOptions());
                     json = rr.Resource.ToString();
                     this.Tag = rr.Resource;
                     this.Text = rr.Resource.Id;
@@ -846,7 +1012,7 @@ namespace Microsoft.Azure.DocumentDBStudio
                 else if (this.resourceType == ResourceType.Permission)
                 {
                     Documents.Permission sp = Documents.Resource.LoadFrom<Documents.Permission>(new MemoryStream(Encoding.UTF8.GetBytes(text)));
-                    ResourceResponse<Documents.Permission> rr = await this.client.ReplacePermissionAsync(sp);
+                    ResourceResponse<Documents.Permission> rr = await this.client.ReplacePermissionAsync(sp, Program.GetMain().GetRequestOptions());
                     json = rr.Resource.ToString();
                     this.Tag = rr.Resource;
                     this.Text = rr.Resource.Id;
@@ -856,7 +1022,7 @@ namespace Microsoft.Azure.DocumentDBStudio
                 else if (this.resourceType == ResourceType.Attachment)
                 {
                     Documents.Attachment sp = (Documents.Attachment)JsonConvert.DeserializeObject(text, typeof(Documents.Attachment));
-                    ResourceResponse<Documents.Attachment> rr = await this.client.ReplaceAttachmentAsync(sp);
+                    ResourceResponse<Documents.Attachment> rr = await this.client.ReplaceAttachmentAsync(sp, Program.GetMain().GetRequestOptions());
                     json = rr.Resource.ToString();
                     this.Tag = rr.Resource;
                     this.Text = rr.Resource.Id;
@@ -874,57 +1040,57 @@ namespace Microsoft.Azure.DocumentDBStudio
             }
         }
 
-        async void DeleteNode(string text, string optional)
+        async void DeleteNode(string text, object optional)
         {
             try
             {
                 if (this.resourceType == ResourceType.Document)
                 {
                     Documents.Document doc = (Documents.Document)JsonConvert.DeserializeObject(text, typeof(Documents.Document));
-                    ResourceResponse<Documents.Document> rr = await this.client.DeleteDocumentAsync(doc.SelfLink);
+                    ResourceResponse<Documents.Document> rr = await this.client.DeleteDocumentAsync(doc.SelfLink, Program.GetMain().GetRequestOptions());
                     Program.GetMain().SetResultInBrowser(null, "Delete Document succeed!", false, rr.ResponseHeaders);
 
                 }
                 else if (this.resourceType == ResourceType.StoredProcedure)
                 {
                     Documents.StoredProcedure sp = (Documents.StoredProcedure)JsonConvert.DeserializeObject(text, typeof(Documents.StoredProcedure));
-                    ResourceResponse<Documents.StoredProcedure> rr = await this.client.DeleteStoredProcedureAsync(sp.SelfLink);
+                    ResourceResponse<Documents.StoredProcedure> rr = await this.client.DeleteStoredProcedureAsync(sp.SelfLink, Program.GetMain().GetRequestOptions());
                     Program.GetMain().SetResultInBrowser(null, "Delete StoredProcedure succeed!", false, rr.ResponseHeaders);
                 }
                 else if (this.resourceType == ResourceType.User)
                 {
                     Documents.User sp = (Documents.User)JsonConvert.DeserializeObject(text, typeof(Documents.User));
-                    ResourceResponse<Documents.User> rr = await this.client.DeleteUserAsync(sp.SelfLink);
+                    ResourceResponse<Documents.User> rr = await this.client.DeleteUserAsync(sp.SelfLink, Program.GetMain().GetRequestOptions());
                     Program.GetMain().SetResultInBrowser(null, "Delete User succeed!", false, rr.ResponseHeaders);
                 }
                 else if (this.resourceType == ResourceType.Trigger)
                 {
                     Documents.Trigger sp = (Documents.Trigger)JsonConvert.DeserializeObject(text, typeof(Documents.Trigger));
-                    ResourceResponse<Documents.Trigger> rr = await this.client.DeleteTriggerAsync(sp.SelfLink);
+                    ResourceResponse<Documents.Trigger> rr = await this.client.DeleteTriggerAsync(sp.SelfLink, Program.GetMain().GetRequestOptions());
                     Program.GetMain().SetResultInBrowser(null, "Delete Trigger succeed!", false, rr.ResponseHeaders);
                 }
                 else if (this.resourceType == ResourceType.UserDefinedFunction)
                 {
                     Documents.UserDefinedFunction sp = (Documents.UserDefinedFunction)JsonConvert.DeserializeObject(text, typeof(Documents.UserDefinedFunction));
-                    ResourceResponse<Documents.UserDefinedFunction> rr = await this.client.DeleteUserDefinedFunctionAsync(sp.SelfLink);
+                    ResourceResponse<Documents.UserDefinedFunction> rr = await this.client.DeleteUserDefinedFunctionAsync(sp.SelfLink, Program.GetMain().GetRequestOptions());
                     Program.GetMain().SetResultInBrowser(null, "Delete UserDefinedFunction succeed!", false, rr.ResponseHeaders);
                 }
                 else if (this.resourceType == ResourceType.Permission)
                 {
                     Documents.Permission sp = (Documents.Permission)JsonConvert.DeserializeObject(text, typeof(Documents.Permission));
-                    ResourceResponse<Documents.Permission> rr = await this.client.DeletePermissionAsync(sp.SelfLink);
+                    ResourceResponse<Documents.Permission> rr = await this.client.DeletePermissionAsync(sp.SelfLink, Program.GetMain().GetRequestOptions());
                     Program.GetMain().SetResultInBrowser(null, "Delete Permission succeed!", false, rr.ResponseHeaders);
                 }
                 else if (this.resourceType == ResourceType.Attachment)
                 {
                     Documents.Attachment sp = (Documents.Attachment)JsonConvert.DeserializeObject(text, typeof(Documents.Attachment));
-                    ResourceResponse<Documents.Attachment> rr = await this.client.DeleteAttachmentAsync(sp.SelfLink);
+                    ResourceResponse<Documents.Attachment> rr = await this.client.DeleteAttachmentAsync(sp.SelfLink, Program.GetMain().GetRequestOptions());
                     Program.GetMain().SetResultInBrowser(null, "Delete Attachment succeed!", false, rr.ResponseHeaders);
                 }
                 else if (this.resourceType == ResourceType.Conflict)
                 {
                     Documents.Conflict sp = (Documents.Conflict)JsonConvert.DeserializeObject(text, typeof(Documents.Conflict));
-                    ResourceResponse<Documents.Conflict> rr = await this.client.DeleteConflictAsync(sp.SelfLink);
+                    ResourceResponse<Documents.Conflict> rr = await this.client.DeleteConflictAsync(sp.SelfLink, Program.GetMain().GetRequestOptions());
                     Program.GetMain().SetResultInBrowser(null, "Delete Conflict succeed!", false, rr.ResponseHeaders);
                 }
                 // Remove the node.
@@ -1058,15 +1224,16 @@ namespace Microsoft.Azure.DocumentDBStudio
             }
         }
 
-        async void AddStoredProcedure(string body, string id)
+        async void AddStoredProcedure(string body, object idobject)
         {
+            string id = idobject as string;
             try
             {
                 Documents.StoredProcedure sp = new Documents.StoredProcedure();
                 sp.Body = body;
                 sp.Id = id;
 
-                ResourceResponse<Documents.StoredProcedure> newsp =  await this.client.CreateStoredProcedureAsync((this.Parent.Tag as Documents.DocumentCollection).SelfLink, sp);
+                ResourceResponse<Documents.StoredProcedure> newsp = await this.client.CreateStoredProcedureAsync((this.Parent.Tag as Documents.DocumentCollection).SelfLink, sp, Program.GetMain().GetRequestOptions());
 
                 this.Nodes.Add(new DocumentNode(this.client, newsp.Resource, ResourceType.StoredProcedure));
 
@@ -1145,7 +1312,7 @@ namespace Microsoft.Azure.DocumentDBStudio
             myMenuItem.Click += new EventHandler(myMenuItemAddUDF_Click);
             this.contextMenu.MenuItems.Add(myMenuItem);
             MenuItem myMenuItem2 = new MenuItem("Add UserDefinedFunction from File");
-            myMenuItem2.Click += new EventHandler(myMenuItemAddUDF_Click);
+            myMenuItem2.Click += new EventHandler(myMenuItemAddUDFFromFile_Click);
             this.contextMenu.MenuItems.Add(myMenuItem2);
             MenuItem myMenuItem1 = new MenuItem("Refresh UserDefinedFunction feed");
             myMenuItem1.Click += new EventHandler((sender, e) => Refresh(true));
@@ -1173,15 +1340,16 @@ namespace Microsoft.Azure.DocumentDBStudio
                 Program.GetMain().SetCrudContext("Add UDF", false, text, this.AddUDF);
             }
         }
-        async void AddUDF(string body, string id)
+        async void AddUDF(string body, object idObject)
         {
+            string id = idObject as string;
             try
             {
                 Documents.UserDefinedFunction udf = new Documents.UserDefinedFunction();
                 udf.Body = body;
                 udf.Id = id;
 
-                ResourceResponse<Documents.UserDefinedFunction> newudf = await this.client.CreateUserDefinedFunctionAsync ((this.Parent.Tag as Documents.DocumentCollection).SelfLink, udf);
+                ResourceResponse<Documents.UserDefinedFunction> newudf = await this.client.CreateUserDefinedFunctionAsync((this.Parent.Tag as Documents.DocumentCollection).SelfLink, udf, Program.GetMain().GetRequestOptions());
 
                 this.Nodes.Add(new DocumentNode(this.client, newudf.Resource, ResourceType.UserDefinedFunction));
 
@@ -1289,8 +1457,9 @@ namespace Microsoft.Azure.DocumentDBStudio
                 true, "function() { \r\n \r\n}", this.AddTrigger);
         }
 
-        async void AddTrigger(string body, string id)
+        async void AddTrigger(string body, object idObject)
         {
+            string id = idObject as string;
             try
             {
                 Documents.Trigger trigger = new Documents.Trigger();
@@ -1299,7 +1468,7 @@ namespace Microsoft.Azure.DocumentDBStudio
                 trigger.TriggerOperation = Documents.TriggerOperation.All;
                 trigger.TriggerType = Documents.TriggerType.Pre;
 
-                ResourceResponse<Documents.Trigger> newtrigger = await this.client.CreateTriggerAsync((this.Parent.Tag as Documents.DocumentCollection).SelfLink, trigger);
+                ResourceResponse<Documents.Trigger> newtrigger = await this.client.CreateTriggerAsync((this.Parent.Tag as Documents.DocumentCollection).SelfLink, trigger, Program.GetMain().GetRequestOptions());
 
                 this.Nodes.Add(new DocumentNode(this.client, newtrigger.Resource, ResourceType.Trigger));
 
@@ -1392,13 +1561,13 @@ namespace Microsoft.Azure.DocumentDBStudio
                 false, x, this.AddUser);
         }
 
-        async void AddUser(string body, string id)
+        async void AddUser(string body, object id)
         {
             try
             {
                 Documents.User user = (Documents.User)JsonConvert.DeserializeObject(body, typeof(Documents.User));
 
-                ResourceResponse<Documents.User> newUser = await this.client.CreateUserAsync((this.Parent.Tag as Documents.Database).SelfLink, user);
+                ResourceResponse<Documents.User> newUser = await this.client.CreateUserAsync((this.Parent.Tag as Documents.Database).SelfLink, user, Program.GetMain().GetRequestOptions());
 
                 this.Nodes.Add(new DocumentNode(this.client, newUser.Resource, ResourceType.User));
 
@@ -1494,13 +1663,13 @@ namespace Microsoft.Azure.DocumentDBStudio
                 false, x, this.AddPermission);
         }
 
-        async void AddPermission(string body, string id)
+        async void AddPermission(string body, object id)
         {
             try
             {
                 Documents.Permission permission = Documents.Resource.LoadFrom<Documents.Permission>(new MemoryStream(Encoding.UTF8.GetBytes(body)));
 
-                ResourceResponse<Documents.Permission> newtpermission = await this.client.CreatePermissionAsync((this.Parent.Tag as Documents.Resource).SelfLink, permission);
+                ResourceResponse<Documents.Permission> newtpermission = await this.client.CreatePermissionAsync((this.Parent.Tag as Documents.Resource).SelfLink, permission, Program.GetMain().GetRequestOptions());
 
                 this.Nodes.Add(new DocumentNode(this.client, newtpermission.Resource, ResourceType.Permission));
 
@@ -1539,7 +1708,7 @@ namespace Microsoft.Azure.DocumentDBStudio
         {
             try
             {
-                FeedResponse<Documents.Permission> sps = this.client.ReadPermissionFeedAsync ((this.Parent.Tag as Documents.User).SelfLink).Result;
+                FeedResponse<Documents.Permission> sps = this.client.ReadPermissionFeedAsync((this.Parent.Tag as Documents.User).SelfLink).Result;
 
                 foreach (var sp in sps)
                 {
@@ -1578,11 +1747,72 @@ namespace Microsoft.Azure.DocumentDBStudio
             MenuItem myMenuItem1 = new MenuItem("Refresh Conflict feed");
             myMenuItem1.Click += new EventHandler((sender, e) => Refresh(true));
             this.contextMenu.MenuItems.Add(myMenuItem1);
+
+            // Query conflicts currrently fail due to gateway
+            //MenuItem myMenuItem2 = new MenuItem("Query Conflict feed");
+            //myMenuItem2.Click += new EventHandler(myMenuItemQueryConflicts_Click);
+            //this.contextMenu.MenuItems.Add(myMenuItem2);
         }
 
         override public void ShowContextMenu(TreeView treeview, Point p)
         {
             this.contextMenu.Show(treeview, p);
+        }
+
+        void myMenuItemQueryConflicts_Click(object sender, EventArgs e)
+        {
+            Program.GetMain().SetCrudContext(string.Format("Query Conflicts"),
+                false, "select * from c", this.QueryConflicts);
+        }
+
+        async void QueryConflicts(string queryText, object optional)
+        {
+            try
+            {
+                // text is the querytext.
+                IDocumentQuery<dynamic> q = this.client.CreateConflictQuery((this.Parent.Tag as Documents.DocumentCollection).ConflictsLink, queryText).AsDocumentQuery();
+
+                FeedResponse<Database> r = await q.ExecuteNextAsync<Database>();
+
+                // set the result window
+                string text = null;
+                if (r.Count > 1)
+                {
+                    text = string.Format("Returned {0} Conflict", r.Count);
+                }
+                else
+                {
+                    text = string.Format("Returned {0} Conflict", r.Count);
+                }
+
+                string jsonarray = "[";
+                int index = 0;
+                foreach (dynamic d in r)
+                {
+                    index++;
+                    // currently Query.ToString() has Formatting.Indented, but the public release doesn't have yet.
+                    jsonarray += d.ToString();
+
+                    if (index == r.Count)
+                    {
+                        jsonarray += "]";
+                    }
+                    else
+                    {
+                        jsonarray += ",\r\n";
+                    }
+                }
+
+                Program.GetMain().SetResultInBrowser(jsonarray, text, true, r.ResponseHeaders);
+            }
+            catch (AggregateException e)
+            {
+                Program.GetMain().SetResultInBrowser(null, e.InnerException.ToString(), true);
+            }
+            catch (Exception e)
+            {
+                Program.GetMain().SetResultInBrowser(null, e.ToString(), true);
+            }
         }
 
         override public void Refresh(bool forceRefresh)

@@ -10,8 +10,7 @@
     <AppDesignerFolder>Properties</AppDesignerFolder>
     <RootNamespace>Microsoft.Azure.DocumentDBStudio</RootNamespace>
     <AssemblyName>DocumentDBStudio</AssemblyName>
-    <ApplicationIcon>
-    </ApplicationIcon>
+    <ApplicationIcon>DocDB.ico</ApplicationIcon>
     <FileUpgradeFlags>
     </FileUpgradeFlags>
     <OldToolsVersion>3.5</OldToolsVersion>
@@ -19,6 +18,7 @@
     </UpgradeBackupLocation>
     <IsWebBootstrapper>false</IsWebBootstrapper>
     <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <TargetFrameworkProfile />
     <PublishUrl>publish\</PublishUrl>
     <Install>true</Install>
     <InstallFrom>Disk</InstallFrom>
@@ -33,7 +33,6 @@
     <ApplicationVersion>1.0.0.%2a</ApplicationVersion>
     <UseApplicationTrust>false</UseApplicationTrust>
     <BootstrapperEnabled>true</BootstrapperEnabled>
-    <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -99,7 +98,7 @@
   <ItemGroup>
     <Reference Include="Microsoft.Azure.Documents.Client, Version=0.9.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\packages\Microsoft.Azure.Documents.Client.0.9.0-preview\lib\net40\Microsoft.Azure.Documents.Client.dll</HintPath>
+      <HintPath>..\packages\Microsoft.Azure.Documents.Client.0.9.1-preview\lib\net40\Microsoft.Azure.Documents.Client.dll</HintPath>
     </Reference>
     <Reference Include="Microsoft.CSharp" />
     <Reference Include="Microsoft.Threading.Tasks">
@@ -136,6 +135,18 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ExcludedPathForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="ExcludedPathForm.Designer.cs">
+      <DependentUpon>ExcludedPathForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="IndexingPathForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="IndexingPathForm.Designer.cs">
+      <DependentUpon>IndexingPathForm.cs</DependentUpon>
+    </Compile>
     <Compile Include="MainForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -156,6 +167,12 @@
     </Compile>
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <EmbeddedResource Include="ExcludedPathForm.resx">
+      <DependentUpon>ExcludedPathForm.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="IndexingPathForm.resx">
+      <DependentUpon>IndexingPathForm.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="MainForm.resx">
       <SubType>Designer</SubType>
       <DependentUpon>MainForm.cs</DependentUpon>
@@ -174,6 +191,7 @@
     <Compile Include="Settings.cs" />
   </ItemGroup>
   <ItemGroup>
+    <Content Include="DocDB.ico" />
     <Content Include="Properties\DeleteHS.png" />
     <Content Include="Properties\HomeHS.png" />
     <Content Include="Properties\NavBack.png" />
@@ -186,6 +204,7 @@
     <Content Include="Resources\database.png" />
     <Content Include="Resources\DocDB.png" />
     <Content Include="Resources\Feed.png" />
+    <Content Include="Resources\go_next_page.png" />
     <Content Include="Resources\Javascript.png" />
     <Content Include="Resources\Permission.png" />
     <EmbeddedResource Include="Resources\prettyJSON\backbone-min.js" />
